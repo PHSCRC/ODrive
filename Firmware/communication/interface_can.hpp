@@ -14,6 +14,7 @@ struct can_Message_t {
     bool isExt = false;
     bool rtr = false;
     uint8_t len = 8;
+    uint16_t timestamp;
     uint8_t buf[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 } ;
 
@@ -35,14 +36,17 @@ enum {
 };
 
 enum CAN_Protocol_t {
-    CAN_PROTOCOL_SIMPLE
+    CAN_PROTOCOL_SIMPLE,
+    CAN_PROTOCOL_OVERKILL
 };
 
 class ODriveCAN {
+   static const CAN_TxHeaderTypeDef empty_msg{0, 0, CAN_ID_STD, CAN_RTR_DATA, 0, FunctionalState::DISABLE}
+   static const uint8_t emptyBuf[8]={0, 0, 0, 0, 0, 0, 0, 0};
    public:
     struct Config_t {
         uint32_t baud = CAN_BAUD_250K;
-        CAN_Protocol_t protocol = CAN_PROTOCOL_SIMPLE;
+        CAN_Protocol_t protocol = CAN_PROTOCOL_OVERKILL;
     };
 
     enum Error_t {
@@ -50,7 +54,7 @@ class ODriveCAN {
         ERROR_DUPLICATE_CAN_IDS = 0x01
     };
 
-    ODriveCAN(CAN_HandleTypeDef *handle, ODriveCAN::Config_t &config);
+    ODriveCAN(CAN_HandleTypeDef *handle, ODriveCAN::Config_t &config, DeadReckoner * dead_reck_);
 
     // Thread Relevant Data
     osThreadId thread_id_;
@@ -67,7 +71,10 @@ class ODriveCAN {
     // I/O Functions
     uint32_t available();
     uint32_t write(can_Message_t &txmsg);
+    uint32_t writeEmpty(uint16_t &id);
     bool read(can_Message_t &rxmsg);
+    bool isMessagePending(uint32_t &mailbox);
+    uint16_t lastTxMessageTimestamp(uint32_t &mailbox);
 
     // Communication Protocol Handling
     auto make_protocol_definitions() {
@@ -82,6 +89,7 @@ class ODriveCAN {
    private:
     CAN_HandleTypeDef *handle_ = nullptr;
     ODriveCAN::Config_t &config_;
+    DeadReckoner * dead_reck;
 
     void set_baud_rate(uint32_t baudRate);
 };

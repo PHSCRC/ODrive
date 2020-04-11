@@ -168,6 +168,7 @@ static inline auto make_obj_tree() {
         make_protocol_object("axis0", axes[0]->make_protocol_definitions()),
         make_protocol_object("axis1", axes[1]->make_protocol_definitions()),
         make_protocol_object("can", odCAN->make_protocol_definitions()),
+        make_protocol_object("dead_reckoner", dead_reck.make_protocol_definitions()),
         make_protocol_property("test_property", &test_property),
         make_protocol_function("test_function", static_functions, &StaticFunctions::test_function, "delta"),
         make_protocol_function("get_oscilloscope_val", static_functions, &StaticFunctions::get_oscilloscope_val, "index"),
@@ -196,7 +197,7 @@ void communication_task(void * ctx) {
 
     // Allow main init to continue
     endpoint_list_valid = true;
-    
+
     start_uart_server();
     start_usb_server();
     if (board_config.enable_i2c_instead_of_can) {

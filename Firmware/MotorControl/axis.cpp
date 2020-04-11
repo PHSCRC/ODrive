@@ -14,7 +14,8 @@ Axis::Axis(int axis_num,
            SensorlessEstimator& sensorless_estimator,
            Controller& controller,
            Motor& motor,
-           TrapezoidalTrajectory& trap)
+           TrapezoidalTrajectory& trap,
+           DeadReckoner& dead_reck)
     : axis_num_(axis_num),
       hw_config_(hw_config),
       config_(config),
@@ -22,7 +23,8 @@ Axis::Axis(int axis_num,
       sensorless_estimator_(sensorless_estimator),
       controller_(controller),
       motor_(motor),
-      trap_(trap) {
+      trap_(trap),
+      dead_reck_(dead_reck) {
     encoder_.axis_ = this;
     sensorless_estimator_.axis_ = this;
     controller_.axis_ = this;
@@ -123,12 +125,12 @@ void Axis::decode_step_dir_pins() {
     dir_pin_ = get_gpio_pin_by_pin(config_.dir_gpio_pin);
 }
 
-// @brief: Setup the watchdog reset value from the configuration watchdog timeout interval. 
+// @brief: Setup the watchdog reset value from the configuration watchdog timeout interval.
 void Axis::update_watchdog_settings() {
 
-    if(config_.watchdog_timeout <= 0.0f) { // watchdog disabled 
+    if(config_.watchdog_timeout <= 0.0f) { // watchdog disabled
         watchdog_reset_value_ = 0;
-    } else if(config_.watchdog_timeout >= UINT32_MAX / (current_meas_hz+1)) { //overflow! 
+    } else if(config_.watchdog_timeout >= UINT32_MAX / (current_meas_hz+1)) { //overflow!
         watchdog_reset_value_ = UINT32_MAX;
     } else {
         watchdog_reset_value_ = static_cast<uint32_t>(config_.watchdog_timeout * current_meas_hz);
@@ -189,7 +191,7 @@ bool Axis::do_updates() {
     encoder_.update();
     sensorless_estimator_.update();
     bool ret = check_for_errors();
-    odCAN->send_heartbeat(this);
+    dead_reck_.cond_update(this);
     return ret;
 }
 
@@ -198,9 +200,9 @@ void Axis::watchdog_feed() {
     watchdog_current_value_ = watchdog_reset_value_;
 }
 
-// @brief Check the watchdog timer for expiration. Also sets the watchdog error bit if expired. 
+// @brief Check the watchdog timer for expiration. Also sets the watchdog error bit if expired.
 bool Axis::watchdog_check() {
-    // reset value = 0 means watchdog disabled. 
+    // reset value = 0 means watchdog disabled.
     if(watchdog_reset_value_ == 0) return true;
 
     // explicit check here to ensure that we don't underflow back to UINT32_MAX
@@ -225,7 +227,7 @@ bool Axis::run_lockin_spin(const LockinConfig_t &lockin_config) {
             return false;
         return x < 1.0f;
     });
-    
+
     // Spin states
     float distance = lockin_config.ramp_distance;
     float phase = wrap_pm_pi(distance);

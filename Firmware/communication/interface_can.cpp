@@ -10,15 +10,17 @@
 
 // Specific CAN Protocols
 #include "can_simple.hpp"
+#include "can_overkill.hpp"
 
 // Safer context handling via maps instead of arrays
 // #include <unordered_map>
 // std::unordered_map<CAN_HandleTypeDef *, ODriveCAN *> ctxMap;
 
 // Constructor is called by communication.cpp and the handle is assigned appropriately
-ODriveCAN::ODriveCAN(CAN_HandleTypeDef *handle, ODriveCAN::Config_t &config)
+ODriveCAN::ODriveCAN(CAN_HandleTypeDef *handle, ODriveCAN::Config_t &config, DeadReckoner * dead_reck_)
     : handle_{handle},
-      config_{config} {
+      config_{config},
+      dead_reck(dead_reck_) {
     // ctxMap[handle_] = this;
 }
 
@@ -28,16 +30,24 @@ void ODriveCAN::can_server_thread() {
         if (status == HAL_CAN_ERROR_NONE) {
             can_Message_t rxmsg;
 
-            osSemaphoreWait(sem_can, 10);  // Poll every 10ms regardless of sempahore status
+            //we will probably time out this semaphore, but this is really just to check the timer every 5ms
+            osSemaphoreWait(sem_can, 5); //this allows the longest time between messages to be 55 and the shortest 45
             while (available()) {
                 read(rxmsg);
                 switch (config_.protocol) {
                     case CAN_PROTOCOL_SIMPLE:
                         CANSimple::handle_can_message(rxmsg);
                         break;
+                    case CAN_PROTOCOL_OVERKILL:
+                        CANOverkill::handle_can_message(rxmsg);
                 }
             }
+            //this takes priority over our sending
             HAL_CAN_ActivateNotification(handle_, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+            if(config_.protocol==CAN_PROTOCOL_OVERKILL){
+              CANOverkill::condSend_dead_reck(dead_reck);
+            }
         } else {
             if (status == HAL_CAN_ERROR_TIMEOUT) {
                 HAL_CAN_ResetError(handle_);
@@ -57,6 +67,8 @@ static void can_server_thread_wrapper(void *ctx) {
 bool ODriveCAN::start_can_server() {
     HAL_StatusTypeDef status;
 
+    handle_.Init.TimeTriggeredMode=ENABLE;
+
     set_baud_rate(config_.baud);
 
     status = HAL_CAN_Init(handle_);
@@ -65,12 +77,10 @@ bool ODriveCAN::start_can_server() {
     filter.FilterActivation = ENABLE;
     filter.FilterBank = 0;
     filter.FilterFIFOAssignment = CAN_RX_FIFO0;
-    filter.FilterIdHigh = 0x0000;
-    filter.FilterIdLow = 0x0000;
-    filter.FilterMaskIdHigh = 0x0000;
-    filter.FilterMaskIdLow = 0x0000;
-    filter.FilterMode = CAN_FILTERMODE_IDMASK;
-    filter.FilterScale = CAN_FILTERSCALE_32BIT;
+    filter.FilterIdHigh = CMD_VEL_ID;
+    filter.FilterIdLow = SYNCHRONIZED_TIME_ID;
+    filter.FilterMode = CAN_FILTERMODE_IDLIST;
+    filter.FilterScale = CAN_FILTERSCALE_16BIT;
 
     status = HAL_CAN_ConfigFilter(handle_, &filter);
 
@@ -105,6 +115,25 @@ uint32_t ODriveCAN::write(can_Message_t &txmsg) {
         return -1;
     }
 }
+uint32_t ODriveCAN::writeEmpty(uint16_t &id) {
+    if (HAL_CAN_GetError(handle_) == HAL_CAN_ERROR_NONE) {
+        empty_msg.StdId=id;
+        uint32_t retTxMailbox = 0;
+        if (HAL_CAN_GetTxMailboxesFreeLevel(handle_) > 0)
+            HAL_CAN_AddTxMessage(handle_, &empty_msg, emptyBuf, &retTxMailbox);
+        return retTxMailbox;
+    } else {
+        return -1;
+    }
+}
+
+bool ODriveCAN::isMessagePending(uint32_t &mailbox){
+  return HAL_CAN_IsTxMessagePending(handle_, mailbox);
+}
+uint16_t ODriveCAN::lastTxMessageTimestamp(uint32_t &mailbox){
+  return HAL_CAN_GetTxTimestamp(handle_, mailbox)
+}
+
 
 uint32_t ODriveCAN::available() {
     return (HAL_CAN_GetRxFifoFillLevel(handle_, CAN_RX_FIFO0) + HAL_CAN_GetRxFifoFillLevel(handle_, CAN_RX_FIFO1));
@@ -125,6 +154,7 @@ bool ODriveCAN::read(can_Message_t &rxmsg) {
     rxmsg.id = rxmsg.isExt ? header.ExtId : header.StdId;  // If it's an extended message, pass the extended ID
     rxmsg.len = header.DLC;
     rxmsg.rtr = header.RTR;
+    rxmsg.timestamp=header.Timestamp;
 
     return validRead;
 }
@@ -137,25 +167,25 @@ void ODriveCAN::set_baud_rate(uint32_t baudRate) {
         case CAN_BAUD_125K:
             handle_->Init.Prescaler = 16;  // 21 TQ's
             config_.baud = baudRate;
-            reinit_can();
+            reinit_can(true);
             break;
 
         case CAN_BAUD_250K:
             handle_->Init.Prescaler = 8;  // 21 TQ's
             config_.baud = baudRate;
-            reinit_can();
+            reinit_can(true);
             break;
 
         case CAN_BAUD_500K:
             handle_->Init.Prescaler = 4;  // 21 TQ's
             config_.baud = baudRate;
-            reinit_can();
+            reinit_can(true);
             break;
 
         case CAN_BAUD_1000K:
             handle_->Init.Prescaler = 2;  // 21 TQ's
             config_.baud = baudRate;
-            reinit_can();
+            reinit_can(true);
             break;
 
         default:
@@ -164,11 +194,20 @@ void ODriveCAN::set_baud_rate(uint32_t baudRate) {
     }
 }
 
-void ODriveCAN::reinit_can() {
+void ODriveCAN::make_silent(){
+  handle_->Init.Mode=CAN_MODE_SILENT;
+  reinit_can(false);
+}
+void ODriveCAN::make_noisy(){
+  handle_->Init.Mode=CAN_MODE_NORMAL;
+  reinit_can(false);
+}
+
+void ODriveCAN::reinit_can(bool setNotif) {
     HAL_CAN_Stop(handle_);
     HAL_CAN_Init(handle_);
     auto status = HAL_CAN_Start(handle_);
-    if (status == HAL_OK)
+    if (status == HAL_OK && setNotif)
         status = HAL_CAN_ActivateNotification(handle_, CAN_IT_RX_FIFO0_MSG_PENDING);
 }
 
@@ -192,9 +231,18 @@ void ODriveCAN::send_heartbeat(Axis *axis) {
     }
 }
 
-void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef *hcan) {}
-void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef *hcan) {}
-void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef *hcan) {}
+void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef *hcan) {
+  HAL_CAN_DeactivateNotification(hcan, CAN_IT_TX_MAILBOX_EMPTY);
+  osSemaphoreRelease(sem_can);
+}
+void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef *hcan) {
+  HAL_CAN_DeactivateNotification(hcan, CAN_IT_TX_MAILBOX_EMPTY);
+  osSemaphoreRelease(sem_can);
+}
+void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef *hcan) {
+  HAL_CAN_DeactivateNotification(hcan, CAN_IT_TX_MAILBOX_EMPTY);
+  osSemaphoreRelease(sem_can);
+}
 void HAL_CAN_TxMailbox0AbortCallback(CAN_HandleTypeDef *hcan) {}
 void HAL_CAN_TxMailbox1AbortCallback(CAN_HandleTypeDef *hcan) {}
 void HAL_CAN_TxMailbox2AbortCallback(CAN_HandleTypeDef *hcan) {}

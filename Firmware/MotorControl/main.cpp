@@ -17,12 +17,14 @@ Controller::Config_t controller_configs[AXIS_COUNT];
 Motor::Config_t motor_configs[AXIS_COUNT];
 Axis::Config_t axis_configs[AXIS_COUNT];
 TrapezoidalTrajectory::Config_t trap_configs[AXIS_COUNT];
+DeadReckoner::Config_t dead_reck_config;
 bool user_config_loaded_;
 
 SystemStats_t system_stats_ = { 0 };
 
 Axis *axes[AXIS_COUNT];
 ODriveCAN *odCAN;
+DeadReckoner *dead_reck;
 
 typedef Config<
     BoardConfig_t,
@@ -43,7 +45,8 @@ void save_configuration(void) {
             &controller_configs,
             &motor_configs,
             &trap_configs,
-            &axis_configs)) {
+            &axis_configs/*,
+            &dead_reck_config*/)) {
         //printf("saving configuration failed\r\n"); osDelay(5);
     } else {
         user_config_loaded_ = true;
@@ -61,10 +64,12 @@ extern "C" int load_configuration(void) {
                 &controller_configs,
                 &motor_configs,
                 &trap_configs,
-                &axis_configs)) {
+                &axis_configs/*,
+                &dead_reck_config*/)) {
         //If loading failed, restore defaults
         board_config = BoardConfig_t();
         can_config = ODriveCAN::Config_t();
+        dead_reck_config=DeadReckoner::Config_t();
         for (size_t i = 0; i < AXIS_COUNT; ++i) {
             encoder_configs[i] = Encoder::Config_t();
             sensorless_configs[i] = SensorlessEstimator::Config_t();
@@ -170,7 +175,8 @@ int odrive_main(void) {
 #endif
 
     // Construct all objects.
-    odCAN = new ODriveCAN(&hcan1, can_config);
+    dead_reck=new DeadReckoner(dead_reck_config);
+    odCAN = new ODriveCAN(&hcan1, can_config, dead_reck);
     for (size_t i = 0; i < AXIS_COUNT; ++i) {
         Encoder *encoder = new Encoder(hw_configs[i].encoder_config,
                                        encoder_configs[i], motor_configs[i]);
@@ -181,9 +187,9 @@ int odrive_main(void) {
                                  motor_configs[i]);
         TrapezoidalTrajectory *trap = new TrapezoidalTrajectory(trap_configs[i]);
         axes[i] = new Axis(i, hw_configs[i].axis_config, axis_configs[i],
-                *encoder, *sensorless_estimator, *controller, *motor, *trap);
+                *encoder, *sensorless_estimator, *controller, *motor, *trap, *dead_reck);
     }
-    
+
     // Start ADC for temperature measurements and user measurements
     start_general_purpose_adc();
 
