@@ -1,14 +1,13 @@
 #include "dead_reckoner.hpp"
 void DeadReckoner::do_update(){
+  uint8_t rightAxis=!config_->leftAxisZero ? 0 : 1;
+  uint8_t leftAxis=config_->leftAxisZero ? 0 : 1;
   float old_theta=dTheta;
-  dTheta=config_.wheelRadius/config_.wheelDistance*(encoders[0].pos_estimate_-encoders[1].pos_estimate_);
-  if(config_.leftAxisZero){
-    dTheta=-dTheta;
-  }
+  dTheta=config_.wheelRadius/config_.wheelDistance*(encoders[rightAxis].pos_estimate_-encoders[leftAxis].pos_estimate_);
   float d_theta=dTheta-old_theta;
-  float d_f=(config_.wheelRadius*(encoders[0].vel_estimate_+encoders[1].vel_estimate_)/2.0f) //forward velocity
+  float d_f=(config_.wheelRadius*(encoders[rightAxis].vel_estimate_+encoders[leftAxis].vel_estimate_)/2.0f) //forward velocity
   /
-  ((config_.wheelRadius/config_.wheelDistance*(encoders[0].vel_estimate_-encoders[1].vel_estimate_)) //angular velocity
+  ((config_.wheelRadius/config_.wheelDistance*(encoders[rightAxis].vel_estimate_-encoders[leftAxis].vel_estimate_)) //angular velocity
   *
   2.0f*fabsf(d_theta*0.5f)); //sqrt(sin^2(x)+(1-cos(x))^2)=2*abs(sin(x/2))
   dX+=d_f*our_arm_cos_f32(dTheta);
