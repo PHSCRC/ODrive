@@ -21,6 +21,12 @@ uint16_t ntoh(uint8_t t){
   return t;
 }
 
+float toStdPos(float angle){
+  while(angle<0){angle+=2*M_PI;}
+  while(angle>=2*M_PI){angle-=2*M_PI;}
+  return angle;
+}
+
 //base types
 struct timestamp{
   static std::array<ros::Time, 255> timeArray;
@@ -66,9 +72,30 @@ public:
   }
 };
 
+template<int max, bool signed>
+class fixed_point;
+
 template<int max>
-class fixed_point{
+class fixed_point<max, true>{
     int16_t representation;
+public:
+    fixed_point(float a){
+        representation=a/max*32767;
+    }
+    fixed_point(){
+        representation=0;
+    }
+    operator float32() const{
+        return (float32)representation*max/32767;
+    }
+    operator float64() const{
+        return (float64)representation*max/32767;
+    }
+};
+
+template<int max>
+class fixed_point<max, false>{
+    uint16_t representation;
 public:
     fixed_point(float a){
         representation=a/max*65535;
@@ -123,16 +150,16 @@ struct cmd_vel_struct{
   static constexpr uint16_t id=idProvider(cmd_vel_priority);
   static constexpr uint8_t size=4;
 
-  flipped<fixed_point<2>> vX;
-  flipped<fixed_point<14>> vTheta;
+  flipped<fixed_point<2, true>> vX;
+  flipped<fixed_point<14, false>> vTheta;
 };
 
 struct odom_struct{
   static constexpr uint8_t size=4;
 
-  flipped<fixed_point<1>> dX;
-  flipped<fixed_point<1>> dY;
-  flipped<fixed_point<7>> dTheta;
+  flipped<fixed_point<1, true>> dX;
+  flipped<fixed_point<1, true>> dY;
+  flipped<fixed_point<7, false>> dTheta;
 };
 
 struct synchronised_time_struct{

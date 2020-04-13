@@ -23,9 +23,9 @@ static void CANOverkill::send_dead_reckoning(DeadReckoner * dead_reck){
   }
   data->ts.n=latestN;
   data->ts.msSinceN=(uint8_t)diff;
-  data->dX=static_cast<fixed_point<1>>(dead_reck->dX);
-  data->dY=static_cast<fixed_point<1>>(dead_reck->dY);
-  data->dTheta=static_cast<fixed_point<7>>(dead_reck->dTheta);
+  data->dX=static_cast<fixed_point<1, true>>(dead_reck->dX);
+  data->dY=static_cast<fixed_point<1, true>>(dead_reck->dY);
+  data->dTheta=static_cast<fixed_point<7, false>>(toStdPos(dead_reck->dTheta));
   dead_reck->reset();
   odCAN->write(txmsg);
 }
