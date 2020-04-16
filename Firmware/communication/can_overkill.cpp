@@ -2,25 +2,25 @@
 #include <odrive_main.h>
 
 static void CANOverkill::send_dead_reckoning(DeadReckoner * dead_reck){
+  if(!gotSynch){
+    return;
+  }
   //getting the latest timestamp
   odCAN->make_silent();
   uint32_t mailbox=odCAN->writeEmpty(TIMER_MSG_ID);
   HAL_CAN_ActivateNotification(hcan, CAN_IT_TX_MAILBOX_EMPTY);
   can_Message_t txmsg;
-  odom_odrive_struct* data=(odom_odrive_struct*)txmsg.data;
-  txmsg.id=odom_odrive_struct::id;
+  odom_struct* data=(odom_struct*)txmsg.data;
+  txmsg.id=idProvider(odom_odrive_priority);
   txmsg.isExt=false;
-  txmsg.len=odom_odrive_struct::size;
+  txmsg.len=odom_struct::size;
 
   //could have been released already, but that's fine we just move on.
   osSemaphoreWait(sem_can, 5); //after 5ms, something has clearly gone wrong, just ignore it
   odCAN->make_noisy();
   //even if this is an overflow loop, it should give the correct answer
   //this goes up every 4us, so divide by 250 to get in ms
-  uint16_t diff=(odCAN->lastTxMessageTimestamp(mailbox)-lastNCANTimerValue)/250
-  if(diff>255){
-    diff=255;
-  }
+  uint16_t diff=std::min((odCAN->lastTxMessageTimestamp(mailbox)-lastNCANTimerValue)/250, 255);
   data->ts.n=latestN;
   data->ts.msSinceN=(uint8_t)diff;
   data->dX=static_cast<fixed_point<1, true>>(dead_reck->dX);
@@ -44,6 +44,7 @@ static CANOverkill::cmd_vel_callback(cmd_vel_struct* data){
 static void CANOverkill::handle_can_message(can_Message_t& msg){
   switch(msg.id){
     case synchronised_time_struct::id:
+      gotSynch=true;
       latestNCANTimerValue=msg.timestamp;
       latestN=msg.data[0];
     break;

@@ -9,6 +9,7 @@
 class CANOverkill{
   static uint16_t lastSentCount=0;
   static uint16_t targetCount=1
+  static bool gotSynch=false;
 
   //internal can timer overflows every 0.26 seconds at 250kbit
   //this means that when we can only miss one synchronised_timer can message before all our timestamps our messed up
